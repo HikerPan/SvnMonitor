@@ -1,0 +1,13 @@
+[Unit]
+Description=SVN Monitor Failure Email Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=alex
+WorkingDirectory=/home/alex/aidev/SvnMonitor
+ExecStart=/home/alex/aidev/SvnMonitor/venv/bin/python /home/alex/aidev/SvnMonitor/scripts/send_failure_email.py
+Environment=OPENSSL_CONF=/home/alex/aidev/SvnMonitor/ssl_config.cnf
+
+[Install]
+WantedBy=multi-user.target

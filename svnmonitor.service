@@ -1,0 +1,16 @@
+[Unit]
+Description=SVN Monitor Service
+After=network.target
+OnFailure=svnmonitor-failure-email.service
+
+[Service]
+Type=simple
+User=alex
+WorkingDirectory=/home/alex/aidev/SvnMonitor
+ExecStart=/bin/bash /home/alex/aidev/SvnMonitor/start_monitor.sh
+Restart=on-failure
+RestartSec=10
+Environment=OPENSSL_CONF=/home/alex/aidev/SvnMonitor/ssl_config.cnf
+
+[Install]
+WantedBy=multi-user.target
