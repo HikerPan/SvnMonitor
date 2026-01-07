@@ -1,0 +1,38 @@
+#!/bin/sh
+
+# SVN post-commit hook to run svn_monitor.py
+# This hook is triggered after a successful commit to the repository
+
+# Repository path (provided by SVN)
+REPOS="$1"
+
+# Revision number (provided by SVN)
+REV="$2"
+
+# Log file for hook execution
+LOG_FILE="/var/log/svn/hook_logs/post-commit.log"
+
+# Create log directory if it doesn't exist
+mkdir -p $(dirname "$LOG_FILE")
+
+echo "[$(date)] Hook triggered for repository: $REPOS, revision: $REV" >> "$LOG_FILE"
+
+# Path to the svn_monitor.py script
+MONITOR_SCRIPT="/path/to/svn_monitor.py"
+
+# Check if the script exists and is executable
+if [ -f "$MONITOR_SCRIPT" ] && [ -x "$MONITOR_SCRIPT" ]; then
+    echo "[$(date)] Running svn_monitor.py for revision $REV" >> "$LOG_FILE"
+    # Run the monitor script with repository path and revision as arguments
+    python3 "$MONITOR_SCRIPT" --repository "$REPOS" --revision "$REV" >> "$LOG_FILE" 2>&1
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo "[$(date)] svn_monitor.py executed successfully" >> "$LOG_FILE"
+    else
+        echo "[$(date)] svn_monitor.py failed with exit code $EXIT_CODE" >> "$LOG_FILE"
+    fi
+else
+    echo "[$(date)] ERROR: svn_monitor.py not found or not executable" >> "$LOG_FILE"
+fi
+
+exit 0
