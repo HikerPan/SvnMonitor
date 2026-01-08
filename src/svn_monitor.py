@@ -957,10 +957,13 @@ class SVNMonitor:
                         command.append('unknown-ca,cn-mismatch,expired,not-yet-valid,other')
             
             # 在Windows中文环境下，SVN输出可能是GBK编码，使用通用方法处理
+            # 确保传递环境变量，特别是OPENSSL_CONF
+            env = os.environ.copy()
             result = subprocess.run(
                 command,
                 capture_output=True,
                 cwd=working_dir,
+                env=env,
                 check=True
             )
             
@@ -1175,22 +1178,13 @@ class SVNMonitor:
                 logger.debug(f"Fetching SVN log for revisions {current_start} to {current_end}")
                 
                 try:
-                    result = subprocess.run(cmd, capture_output=True, timeout=60)
-                    if result.returncode == 0:
-                        # 尝试用utf-8解码，如果失败则使用gbk
-                        try:
-                            log_output = result.stdout.decode('utf-8').strip()
-                        except UnicodeDecodeError:
-                            log_output = result.stdout.decode('gbk').strip()
-                            
-                        if log_output:
-                            combined_logs.append(log_output)
-                        else:
-                            logger.warning(f"Empty log output for revisions {current_start} to {current_end}")
+                    # 使用_run_svn_command方法执行SVN命令，确保环境变量正确传递
+                    log_output = self._run_svn_command(cmd, repo_config)
+                    if log_output:
+                        combined_logs.append(log_output)
                     else:
-                        error_msg = result.stderr.strip()
-                        logger.error(f"SVN log command failed for revisions {current_start} to {current_end}: {error_msg}")
-                        # If we get an error, try to get individual revisions
+                        logger.warning(f"Empty log output for revisions {current_start} to {current_end}")
+                        # If we get empty output, try to get individual revisions
                         for rev in range(current_start, current_end + 1):
                             try:
                                 single_cmd = [
@@ -1198,20 +1192,11 @@ class SVNMonitor:
                                     '--xml', '--verbose',
                                     '-r', str(rev)
                                 ]
-                                single_result = subprocess.run(single_cmd, capture_output=True, timeout=30)
-                                if single_result.returncode == 0:
-                                    # 尝试用utf-8解码，如果失败则使用gbk
-                                    try:
-                                        single_log = single_result.stdout.decode('utf-8').strip()
-                                    except UnicodeDecodeError:
-                                        single_log = single_result.stdout.decode('gbk').strip()
-                                        
-                                    if single_log:
-                                        combined_logs.append(single_log)
+                                single_log = self._run_svn_command(single_cmd, repo_config)
+                                if single_log:
+                                    combined_logs.append(single_log)
                             except Exception as e:
                                 logger.warning(f"Failed to get revision {rev}: {str(e)}")
-                except subprocess.TimeoutExpired:
-                    logger.warning(f"SVN log command timeout for revisions {current_start} to {current_end}")
                 except Exception as e:
                     logger.error(f"Error executing SVN log command: {str(e)}")
                 
