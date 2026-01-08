@@ -17,6 +17,7 @@ import configparser
 import datetime
 import smtplib
 import re
+import signal
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from logging.handlers import RotatingFileHandler
@@ -162,6 +163,12 @@ class SVNMonitor:
         self.recipients_mapping = self._load_recipients_from_excel()
         # 初始化远程检测模式配置
         self.use_remote_check = self._get_remote_check_setting()
+        
+        # 设置程序运行标志和信号处理
+        self.running = True
+        signal.signal(signal.SIGTERM, self._handle_sigterm)
+        signal.signal(signal.SIGINT, self._handle_sigterm)
+        
         logger.info(f"SVN Monitor initialized with {len(self.repositories)} repositories, remote check mode: {self.use_remote_check}")
     
     def _load_config(self):
@@ -452,6 +459,17 @@ class SVNMonitor:
             value = self.config['SYSTEM']['use_remote_check']
             return str(value).lower() in ('true', '1', 'yes', 'on')
         return False
+    
+    def _handle_sigterm(self, signum, frame):
+        """处理终止信号(SIGTERM和SIGINT)
+        
+        Args:
+            signum: 信号编号
+            frame: 当前堆栈帧
+        """
+        logger.info(f"收到终止信号 {signum}，准备优雅退出")
+        self.log_operation('INFO', f"SVN Monitor收到终止信号 {signum}，准备优雅退出")
+        self.running = False
     
     def _save_last_revisions(self, revisions):
         """Save the last revisions for all repositories"""
@@ -2356,7 +2374,7 @@ class SVNMonitor:
                 logger.error(error_msg)
                 self.log_operation('ERROR', error_msg)
             
-            while True:
+            while self.running:
                 try:
                     # 计算应该等待的时间
                     current_time = time.time()
@@ -2366,7 +2384,16 @@ class SVNMonitor:
                     if elapsed < min_check_interval:
                         wait_time = min_check_interval - elapsed
                         logger.info(f"等待 {wait_time:.2f} 秒后进行下一次仓库检查，当前时间: {get_beijing_time_str()}")
-                        time.sleep(wait_time)
+                        # 使用小步循环等待，以便能够响应终止信号
+                        remaining_time = wait_time
+                        start_wait_time = time.time()
+                        while remaining_time > 0 and self.running:
+                            time.sleep(min(1, remaining_time))  # 最多等待1秒
+                            remaining_time = wait_time - (time.time() - start_wait_time)
+                        
+                        # 如果在等待期间收到终止信号，直接退出循环
+                        if not self.running:
+                            break
                     
                     # 更新最后检查时间
                     last_check_time = time.time()
