@@ -2014,23 +2014,198 @@ class SVNMonitor:
     
     # Backup functionality has been removed
 
+    def send_status_email(self, check_result):
+        """发送程序运行状态邮件
+        
+        Args:
+            check_result: 检查结果字典，包含以下字段：
+                - check_time: 检查时间
+                - total_repos: 总仓库数
+                - repos_with_changes: 有变更的仓库数
+                - total_changes: 总变更数
+                - repos_checked: 已检查的仓库列表
+                - errors: 错误信息列表
+                
+        Returns:
+            bool: 是否发送成功
+        """
+        try:
+            # 检查邮件配置是否完整
+            if 'EMAIL' not in self.config or not all([
+                'smtp_server' in self.config['EMAIL'],
+                'from_email' in self.config['EMAIL']
+            ]):
+                logger.warning("状态邮件发送跳过：邮件配置不完整")
+                self.log_operation('WARNING', "状态邮件发送跳过：邮件配置不完整")
+                return False
+            
+            # 检查是否有SMTP凭证
+            has_credentials = False
+            if 'username' in self.config['EMAIL'] and 'password' in self.config['EMAIL']:
+                username = self.config['EMAIL'].get('username', '').strip()
+                password = self.config['EMAIL'].get('password', '').strip()
+                has_credentials = bool(username) and bool(password)
+            
+            if not has_credentials:
+                logger.info("状态邮件发送跳过：未配置有效的SMTP凭证")
+                self.log_operation('INFO', "状态邮件发送跳过：未配置有效的SMTP凭证")
+                return False
+            
+            # 准备邮件内容
+            check_time = check_result.get('check_time', get_beijing_time_str())
+            total_repos = check_result.get('total_repos', 0)
+            repos_with_changes = check_result.get('repos_with_changes', 0)
+            total_changes = check_result.get('total_changes', 0)
+            repos_checked = check_result.get('repos_checked', [])
+            errors = check_result.get('errors', [])
+            
+            # 创建邮件主题
+            subject = f"SVN监控程序运行状态报告 - {check_time}"
+            
+            # 创建邮件正文
+            body = f"""
+            <html>
+            <body>
+                <h2>SVN监控程序运行状态报告</h2>
+                <p><strong>检测时间：</strong>{check_time}</p>
+                
+                <h3>检测概况</h3>
+                <table border="1" cellpadding="5" cellspacing="0">
+                    <tr>
+                        <td><strong>监控仓库总数</strong></td>
+                        <td>{total_repos}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>本次检测仓库数</strong></td>
+                        <td>{len(repos_checked)}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>有变更的仓库数</strong></td>
+                        <td>{repos_with_changes}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>检测到的变更总数</strong></td>
+                        <td>{total_changes}</td>
+                    </tr>
+                </table>
+                
+                <h3>检测的仓库列表</h3>
+                <table border="1" cellpadding="5" cellspacing="0">
+                    <tr bgcolor="#f2f2f2">
+                        <th>仓库ID</th>
+                        <th>仓库名称</th>
+                        <th>状态</th>
+                    </tr>
+            """
+            
+            # 添加仓库详情
+            for repo_name in repos_checked:
+                # 使用动态加载的仓库名称映射（从Excel配置文件读取）
+                repo_name_mapping = self.repo_name_mapping
+                chinese_repo_name = repo_name_mapping.get(repo_name, repo_name)
+                
+                # 查找英文ID（REPO_*）
+                repo_id = None
+                for key, value in self.repo_name_mapping.items():
+                    if key.startswith('REPO_') and (value == chinese_repo_name or key == repo_name):
+                        repo_id = key
+                        break
+                if repo_id is None:
+                    repo_id = repo_name
+                
+                # 检查该仓库是否有变更
+                has_change = False
+                if repos_with_changes > 0 and total_changes > 0:
+                    # 这里简化处理，实际可以根据check_result中的详细信息判断
+                    has_change = False
+                
+                status = "正常" if not has_change else "有变更"
+                status_color = "green" if not has_change else "orange"
+                
+                body += f"""
+                    <tr>
+                        <td>{repo_id}</td>
+                        <td>{chinese_repo_name}</td>
+                        <td style='color: {status_color}; font-weight: bold;'>{status}</td>
+                    </tr>
+                """
+            
+            body += """
+                </table>
+            """
+            
+            # 添加错误信息（如果有）
+            if errors:
+                body += """
+                <h3 style='color: red;'>检测过程中发生的错误</h3>
+                <table border="1" cellpadding="5" cellspacing="0">
+                    <tr bgcolor="#f2f2f2">
+                        <th>仓库</th>
+                        <th>错误信息</th>
+                    </tr>
+                """
+                for error in errors:
+                    repo_name = error.get('repo', '未知')
+                    error_msg = error.get('message', '未知错误')
+                    body += f"""
+                        <tr>
+                            <td>{repo_name}</td>
+                            <td style='color: red;'>{error_msg}</td>
+                        </tr>
+                    """
+                body += """
+                </table>
+                """
+            
+            body += """
+                <p><em>此邮件由SVN监控程序自动发送，请勿回复。</em></p>
+            </body>
+            </html>
+            """
+            
+            # 创建邮件消息
+            msg = MIMEMultipart('alternative')
+            msg['From'] = self.config['EMAIL']['from_email']
+            # 状态邮件发送给pyc@lektec.com
+            msg['To'] = 'pyc@lektec.com'
+            msg['Subject'] = subject
+
+            # 附加HTML正文
+            msg.attach(MIMEText(body, 'html'))
+
+            # 发送邮件
+            success = self._send_email(msg)
+            if success:
+                logger.info("程序运行状态邮件发送成功")
+                self.log_operation('SUCCESS', "程序运行状态邮件发送成功")
+            else:
+                logger.warning("程序运行状态邮件发送失败")
+                self.log_operation('WARNING', "程序运行状态邮件发送失败")
+
+            return success
+        except Exception as e:
+            logger.error(f"发送程序运行状态邮件时出错：{str(e)}")
+            self.log_operation('ERROR', f"发送程序运行状态邮件时出错：{str(e)}")
+            return False
+
     def setup_auto_startup(self):
         """Set up the script to run automatically on startup (Windows)"""
         try:
             if sys.platform == 'win32':
                 import winreg
-                
+
                 # Get the path to the current script
                 script_path = os.path.abspath(__file__)
                 python_exe = sys.executable
-                
+
                 # Create a batch file to run the script
-                batch_path = os.path.join(os.path.dirname(script_path), 'run_svn_monitor.bat')
+                batch_path = os.path.join(os.path.dirname(script_path),
+                                          'run_svn_monitor.bat')
                 with open(batch_path, 'w') as f:
-                    f.write(f'@echo off\n')
+                    f.write('@echo off\n')
                     f.write(f'"{python_exe}" "{script_path}"\n')
-                    f.write(f'exit\n')
-                
+                    f.write('exit\n')
+
                 # Add to startup registry
                 key = winreg.OpenKey(
                     winreg.HKEY_CURRENT_USER,
@@ -2038,7 +2213,8 @@ class SVNMonitor:
                     0,
                     winreg.KEY_SET_VALUE
                 )
-                winreg.SetValueEx(key, 'SVN_Monitor', 0, winreg.REG_SZ, batch_path)
+                winreg.SetValueEx(key, 'SVN_Monitor', 0, winreg.REG_SZ,
+                                 batch_path)
                 winreg.CloseKey(key)
                 
                 logger.info(f"Auto startup configured. Script will run on system boot.")
@@ -2047,43 +2223,52 @@ class SVNMonitor:
         except Exception as e:
             logger.error(f"Failed to set up auto startup: {str(e)}")
             raise
-    
+
     # 备份功能已移除
-    
+
     def _validate_config(self):
         """Validate the configuration settings"""
         # Global required sections
         required_sections = ['EMAIL', 'LOGGING', 'SYSTEM']
-        
+
         # Ensure all required global sections exist
         for section in required_sections:
             if section not in self.config:
-                logger.warning(f"Configuration section '{section}' missing. Creating default settings.")
+                logger.warning(
+                    f"Configuration section '{section}' missing. Creating default settings."
+                )
                 self.config[section] = {}
-        
+
         # Ensure SYSTEM section has required keys
         if 'auto_startup' not in self.config['SYSTEM']:
             self.config['SYSTEM']['auto_startup'] = 'True'
         if 'use_remote_check' not in self.config['SYSTEM']:
             self.config['SYSTEM']['use_remote_check'] = 'True'
-        
+
         # Check for at least one repository configuration
         repositories = self._get_repositories()
         if not repositories:
-            logger.warning("No repository configurations found. Creating a default repository configuration.")
+            logger.warning(
+                "No repository configurations found. Creating a default repository configuration."
+            )
             self._create_default_repository_config()
         else:
             # Validate each repository configuration has required fields
             for repo_name, repo_config in repositories.items():
                 # Ensure local_working_copy exists for all repositories
                 if 'local_working_copy' not in repo_config:
-                    logger.warning(f"Repository '{repo_name}' missing 'local_working_copy'. Adding default path.")
+                    logger.warning(
+                        f"Repository '{repo_name}' missing 'local_working_copy'. Adding default path."
+                    )
                     # Create a default working copy path
-                    default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'svn_wc', repo_name)
+                    default_path = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), 'svn_wc',
+                        repo_name
+                    )
                     repo_config['local_working_copy'] = default_path
-        
+
         # No need to save configuration to file as we're using Excel for configuration management
-    
+
     def run(self):
         """Main run method for the SVN monitor"""
         try:
@@ -2115,6 +2300,76 @@ class SVNMonitor:
             
             # 记录上一次检查的时间
             last_check_time = time.time()
+            
+            # 启动时立即检测一次版本变化（不等待第一个检查间隔）
+            logger.info("服务启动，立即检查所有仓库变更...")
+            try:
+                all_changes = []
+                changes_to_update = {}
+                
+                # Fix: Dynamically reread last_revisions.json file to ensure using the latest version records
+                self.last_revisions = self._get_last_recorded_revisions()
+                
+                # Check each repository for changes
+                for repo_name, repo_config in self.repositories.items():
+                    try:
+                        # Check for changes
+                        latest_revision = self.get_latest_revision(repo_config)
+                        last_revision = self.last_revisions.get(repo_name, 0)
+                        
+                        if latest_revision > last_revision:
+                            logger.info(f"New changes detected in repository '{repo_name}': {last_revision} -> {latest_revision}")
+                            # Log the detected changes
+                            self.log_operation('CHANGE_DETECTED', 
+                                              f"New changes detected: {last_revision} -> {latest_revision}",
+                                              repository=repo_name)
+                            changes = self.get_changes(last_revision, latest_revision, repo_config)
+                            
+                            # Only add changes if notifications are enabled for this repository
+                            if repo_config.get('notify_on_changes', 'True').lower() == 'true':
+                                all_changes.extend(changes)
+                                # Store changes and revision info for this repository
+                                changes_to_update[repo_name] = {
+                                    'last_revision': last_revision,
+                                    'latest_revision': latest_revision
+                                }
+                            else:
+                                # If notifications are disabled, update revision immediately
+                                self.last_revisions[repo_name] = latest_revision
+                                # Save immediately for repos with notifications disabled
+                                self._save_last_revisions(self.last_revisions)
+                    except Exception as e:
+                        error_msg = f"Error checking repository '{repo_name}': {str(e)}"
+                        logger.error(error_msg)
+                        self.log_operation('ERROR', error_msg, repository=repo_name)
+                        # Continue with other repositories even if one fails
+                
+                # No unconditional save here to ensure revisions are only saved after successful email or for disabled notifications
+                
+                # 记录检查完成的日志
+                logger.info("所有仓库检查完成，准备处理变更通知")
+                
+                # Send notifications for all changes
+                if all_changes:
+                    email_success = self.send_email_notification(all_changes)
+                    # Only update and save revision numbers if email was sent successfully
+                    if email_success:
+                        logger.info("Email notification successful, updating repository revision numbers")
+                        # Create a temporary copy to avoid modifying self.last_revisions directly
+                        temp_revisions = self.last_revisions.copy()
+                        for repo_name, info in changes_to_update.items():
+                            temp_revisions[repo_name] = info['latest_revision']
+                        # Only update and save if all updates were successful
+                        self.last_revisions = temp_revisions
+                        self._save_last_revisions(self.last_revisions)
+                    else:
+                        logger.warning("Email notification failed, keeping original revision numbers")
+                        # Explicitly reload last revisions to ensure no changes were made
+                        self.last_revisions = self._get_last_recorded_revisions()
+            except Exception as e:
+                error_msg = f"Error in initial repository check: {str(e)}"
+                logger.error(error_msg)
+                self.log_operation('ERROR', error_msg)
             
             while True:
                 try:
@@ -2194,6 +2449,24 @@ class SVNMonitor:
                             logger.warning("Email notification failed, keeping original revision numbers")
                             # Explicitly reload last revisions to ensure no changes were made
                             self.last_revisions = self._get_last_recorded_revisions()
+                    
+                    # 每次定时检测完成后，发送程序运行状态邮件
+                    try:
+                        # 准备状态邮件的检测结果数据
+                        check_result = {
+                            'check_time': get_beijing_time_str(),
+                            'total_repos': len(self.repositories),
+                            'repos_with_changes': len(changes_to_update),
+                            'total_changes': len(all_changes),
+                            'repos_checked': list(self.repositories.keys()),
+                            'errors': []  # 可以在检测过程中收集错误信息
+                        }
+                        
+                        # 发送状态邮件
+                        self.send_status_email(check_result)
+                    except Exception as e:
+                        logger.error(f"发送程序运行状态邮件时出错：{str(e)}")
+                        # 状态邮件发送失败不影响主程序运行
                         
                 except KeyboardInterrupt:
                     logger.info("SVN Monitor stopped by user")
