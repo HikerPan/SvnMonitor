@@ -2309,6 +2309,7 @@ class SVNMonitor:
             try:
                 all_changes = []
                 changes_to_update = {}
+                errors = []  # 收集所有仓库检查错误
                 
                 # Fix: Dynamically reread last_revisions.json file to ensure using the latest version records
                 self.last_revisions = self._get_last_recorded_revisions()
@@ -2345,6 +2346,11 @@ class SVNMonitor:
                         error_msg = f"Error checking repository '{repo_name}': {str(e)}"
                         logger.error(error_msg)
                         self.log_operation('ERROR', error_msg, repository=repo_name)
+                        # 收集错误信息
+                        errors.append({
+                            'repo': repo_name,
+                            'message': error_msg
+                        })
                         # Continue with other repositories even if one fails
                 
                 # No unconditional save here to ensure revisions are only saved after successful email or for disabled notifications
@@ -2369,6 +2375,24 @@ class SVNMonitor:
                         logger.warning("Email notification failed, keeping original revision numbers")
                         # Explicitly reload last revisions to ensure no changes were made
                         self.last_revisions = self._get_last_recorded_revisions()
+                
+                # 服务启动后发送状态通知邮件，无论是否有变更
+                try:
+                    # 准备状态邮件的检测结果数据
+                    check_result = {
+                        'check_time': get_beijing_time_str(),
+                        'total_repos': len(self.repositories),
+                        'repos_with_changes': len(changes_to_update),
+                        'total_changes': len(all_changes),
+                        'repos_checked': list(self.repositories.keys()),
+                        'errors': errors  # 包含所有收集到的错误信息
+                    }
+                    
+                    # 发送状态邮件
+                    self.send_status_email(check_result)
+                except Exception as e:
+                    logger.error(f"发送程序运行状态邮件时出错：{str(e)}")
+                    # 状态邮件发送失败不影响主程序运行
             except Exception as e:
                 error_msg = f"Error in initial repository check: {str(e)}"
                 logger.error(error_msg)
@@ -2401,6 +2425,7 @@ class SVNMonitor:
                     
                     all_changes = []
                     changes_to_update = {}
+                    errors = []  # 收集所有仓库检查错误
                     
                     # Fix: Dynamically reread last_revisions.json file to ensure using the latest version records
                     self.last_revisions = self._get_last_recorded_revisions()
@@ -2437,6 +2462,11 @@ class SVNMonitor:
                             error_msg = f"Error checking repository '{repo_name}': {str(e)}"
                             logger.error(error_msg)
                             self.log_operation('ERROR', error_msg, repository=repo_name)
+                            # 收集错误信息
+                            errors.append({
+                                'repo': repo_name,
+                                'message': error_msg
+                            })
                             # Continue with other repositories even if one fails
                     
                     # No unconditional save here to ensure revisions are only saved after successful email or for disabled notifications
@@ -2471,7 +2501,7 @@ class SVNMonitor:
                             'repos_with_changes': len(changes_to_update),
                             'total_changes': len(all_changes),
                             'repos_checked': list(self.repositories.keys()),
-                            'errors': []  # 可以在检测过程中收集错误信息
+                            'errors': errors  # 包含所有收集到的错误信息
                         }
                         
                         # 发送状态邮件

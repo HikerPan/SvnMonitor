@@ -14,9 +14,9 @@ export OPENSSL_CONF="$SCRIPT_DIR/ssl_config.cnf"
 echo "当前OPENSSL_CONF: $OPENSSL_CONF"
 python -c "import os; print('Python进程OPENSSL_CONF:', os.environ.get('OPENSSL_CONF'))"
 
-# 发送服务启动通知邮件
-echo "发送服务启动通知邮件..."
-python scripts/send_startup_email.py
+# 发送服务启动通知邮件已在主程序中实现，此处不再重复发送
+# echo "发送服务启动通知邮件..."
+# python scripts/send_startup_email.py
 
 # 进入src目录并启动程序
 cd src
